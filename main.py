@@ -1,9 +1,11 @@
 import cv2, sys, time
 import mediapipe as mp
-import tensorflow
+import keras
+import numpy as np
+import pandas as pd
 from autocorrect import Speller
-from manualLetterFind import find_letter
 
+OUTPUTS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', "H", 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', ' ', '.']
 
 def main():
     feed = cv2.VideoCapture(0)
@@ -22,6 +24,8 @@ def main():
     time.sleep(1)
     left = True if input("If left hand type L:") == 'L' else False
 
+    collect_data = input("Do you want to collect data? (y/n): ").lower() == 'y'
+    label = OUTPUTS.index(input("Enter label for collected data: ")) if collect_data else None
 
     while True:
         ret, frame = feed.read()
@@ -40,46 +44,12 @@ def main():
             for hand_landmarks in results.multi_hand_landmarks:
                 # mp.solutions.drawing_utils.draw_landmarks(
                 #     frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-                landmarks = [(lm.x, lm.y, lm.z) for lm in hand_landmarks.landmark]
+                landmarks = [(lm.x, lm.y) for lm in hand_landmarks.landmark]
+                if collect_data and len(landmarks) == 21:
+                    # Get relative positions and save to file
+                    relative_landmarks = getRelativePositions(landmarks)
+                    saveLandmarksToFile(relative_landmarks, label)
 
-        letter = find_letter(landmarks)
-
-        if letter and letter == lastCheck:
-            count += 1
-            if letter == lastLet:
-                diffCount = 0
-            if count == 5:
-                if letter in ('D', 'Z'):
-                    if letter == 'D':
-                        if lastLet == 'Z' and zCount == 1:
-                            zCount = 2
-                        else:
-                            translation += letter
-                        lastLet = 'D'
-                    else:
-                        if lastLet == 'D':
-                            if zCount == 0:
-                                zCount = 1
-                                lastLet = 'Z'
-                            elif zCount == 2:
-                                zCount = 0
-                                lastLet = 'Z'
-                                translation = translation[0:-1] + letter
-                else:
-                    if letter == 'J':
-                        if lastLet == 'I':
-                            translation = translation[0:-1] + 'J'
-                            lastLet = 'J'
-                    elif letter != lastLet:
-                        translation += letter
-                        lastLet = letter
-        else:
-            if letter != lastLet:
-                diffCount += 1
-                if diffCount == 5:
-                    lastLet = None
-            lastCheck = letter
-            count = 1
 
         cv2.imshow('Hand Tracking', frame)
 
@@ -96,6 +66,42 @@ def main():
     if getattr(sys, 'frozen', False):
         input("Press Enter to exit...")
 
+    if collect_data:
+        trainModel()
+
+def getRelativePositions(landmarks):
+    wrist = landmarks[0]
+    relatives = []
+    for i in range(1, 21):
+        relatives.append([landmarks[i][0] - wrist[0], landmarks[i][1] - wrist[1]])
+    return relatives
+
+def saveLandmarksToFile(landmarks, label, filename='data.csv'):
+    # Convert label to a list before concatenation
+    flat_landmarks = [coord for landmark in landmarks for coord in landmark[:2]]  # Use only x and y
+    flat_landmarks.append(label)
+    with open(filename, 'a') as f:
+        np.savetxt(f, flat_landmarks, delimiter=",")  # Ensure it's a 1D array for saving
+
+
+def trainModel():
+    
+    data = pd.read_csv('data.csv', )
+    
+    X = data.iloc[:,:-1].values
+    Y = data.iloc[:,-1].values
+    
+    
+    model = keras.models.Sequential([
+        keras.layers.Dense(64, activation='relu', input_shape=(40,)),
+        keras.layers.Dense(32, activation='relu'),
+        keras.layers.Dense(38, activation='softmax')
+    ])
+
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    model.fit(X, Y, epochs=10, validation_split=0.2)
+
+    model.save('signModel.h5')
 
 if __name__ == "__main__":
     main()
